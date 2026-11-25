@@ -24,21 +24,21 @@ import (
 var webFS embed.FS
 
 type config struct {
-	Listen        string
-	PublicURL     string
-	Issuer        string
-	ClientID      string
-	AllowedSubs   map[string]bool
-	AllowedUser   string
-	StateDir      string
-	AppsDir       string
-	DiskStatus    string
-	BackupsDir    string
-	PostgresCtr   string
-	ValkeyCtr     string
-	DockerSock    string
-	PodmanSock    string
-	SessionTTL    time.Duration
+	Listen      string
+	PublicURL   string
+	Issuer      string
+	ClientID    string
+	AllowedSubs map[string]bool
+	AllowedUser string
+	StateDir    string
+	AppsDir     string
+	DiskStatus  string
+	BackupsDir  string
+	PostgresCtr string
+	ValkeyCtr   string
+	DockerSock  string
+	PodmanSock  string
+	SessionTTL  time.Duration
 }
 
 func env(k, def string) string {

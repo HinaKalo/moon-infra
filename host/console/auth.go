@@ -25,11 +25,11 @@ import (
 )
 
 type discovery struct {
-	Issuer      string `json:"issuer"`
-	AuthURL     string `json:"authorization_endpoint"`
-	TokenURL    string `json:"token_endpoint"`
-	JWKSURL     string `json:"jwks_uri"`
-	EndSession  string `json:"end_session_endpoint"`
+	Issuer     string `json:"issuer"`
+	AuthURL    string `json:"authorization_endpoint"`
+	TokenURL   string `json:"token_endpoint"`
+	JWKSURL    string `json:"jwks_uri"`
+	EndSession string `json:"end_session_endpoint"`
 }
 
 type authenticator struct {
@@ -37,11 +37,11 @@ type authenticator struct {
 	key    []byte
 	client *http.Client
 
-	mu      sync.Mutex
-	disc    *discovery
-	discAt  time.Time
-	jwks    map[string]*rsa.PublicKey
-	jwksAt  time.Time
+	mu     sync.Mutex
+	disc   *discovery
+	discAt time.Time
+	jwks   map[string]*rsa.PublicKey
+	jwksAt time.Time
 }
 
 type session struct {
@@ -129,8 +129,6 @@ func (a *authenticator) setCookie(w http.ResponseWriter, name, value, path strin
 }
 
 // ---------------------------------------------------------------- 中间件
-
-type ctxKey struct{}
 
 func (a *authenticator) require(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

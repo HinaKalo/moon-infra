@@ -16,13 +16,13 @@ import (
 // ---------------------------------------------------------------- CI/CD 项目
 
 type Deploy struct {
-	At       string `json:"at"`
-	SHA      string `json:"sha"`
-	Actor    string `json:"actor"`
-	RunID    string `json:"run_id"`
-	Result   string `json:"result"`
-	Seconds  int    `json:"seconds"`
-	Error    string `json:"error,omitempty"`
+	At      string `json:"at"`
+	SHA     string `json:"sha"`
+	Actor   string `json:"actor"`
+	RunID   string `json:"run_id"`
+	Result  string `json:"result"`
+	Seconds int    `json:"seconds"`
+	Error   string `json:"error,omitempty"`
 }
 
 type Project struct {

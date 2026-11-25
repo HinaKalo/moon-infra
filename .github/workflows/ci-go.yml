@@ -1,0 +1,60 @@
+# 可复用：Go 项目 CI（格式、静态检查、测试、漏洞、构建）
+name: ci-go
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Go 模块所在目录
+        type: string
+        default: "."
+      race:
+        description: 是否开启 -race
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: ${{ inputs.working-directory }}/go.mod
+          cache-dependency-path: ${{ inputs.working-directory }}/go.sum
+
+      - name: gofmt
+        run: |
+          # 在子目录中 git ls-files 返回的就是相对当前目录的路径
+          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/') 2>/dev/null || true)
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件需要 gofmt："; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+      - name: test
+        run: |
+          flags="-count=1 -coverprofile=coverage.out"
+          if [ "${{ inputs.race }}" = "true" ]; then flags="$flags -race"; fi
+          go test $flags ./...
+          go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: build
+        run: CGO_ENABLED=0 go build ./...

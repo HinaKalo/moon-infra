@@ -1,0 +1,57 @@
+# 可复用：安全扫描（密钥泄露 + 依赖与配置漏洞），结果上传到 GitHub 代码扫描
+name: security
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-vulnerability:
+        description: Trivy 发现 HIGH/CRITICAL 漏洞时是否让检查失败
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks（全部历史）
+        run: |
+          v=8.30.1
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks git --redact --no-banner --exit-code 1 --report-format sarif --report-path gitleaks.sarif .
+
+  vulnerabilities:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Trivy（依赖、配置）
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy.sarif
+          exit-code: ${{ inputs.fail-on-vulnerability && '1' || '0' }}
+
+      - name: 上传到代码扫描
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy

@@ -1,0 +1,45 @@
+# moon-infra 自身的 CI：工作流语法、宿主组件（Go）、脚本、安全扫描
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  workflows:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  console:
+    uses: ./.github/workflows/ci-go.yml
+    with:
+      working-directory: host/console
+
+  deployd:
+    uses: ./.github/workflows/ci-go.yml
+    with:
+      working-directory: host/deployd
+
+  scripts:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: shellcheck
+        run: shellcheck -S warning host/install.sh host/diskguard/moon-diskguard
+
+  security:
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      security-events: write

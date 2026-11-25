@@ -255,16 +255,16 @@ type deployReq struct {
 }
 
 var (
-	deployMu  sync.Mutex
-	nameRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
-	labelRe   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	deployMu   sync.Mutex
+	nameRe     = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+	labelRe    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	upstreamRe = regexp.MustCompile(`^(127\.0\.0\.1|localhost):[0-9]{2,5}$`)
-	reserved  = map[string]bool{"moon-platform": true, "platform": true, "deploy": true, "moon-infra": true, "console": true}
+	reserved   = map[string]bool{"moon-platform": true, "platform": true, "deploy": true, "moon-infra": true, "console": true}
 )
 
 type streamWriter struct {
-	w http.ResponseWriter
-	f http.Flusher
+	w  http.ResponseWriter
+	f  http.Flusher
 	mu sync.Mutex
 }
 
@@ -862,7 +862,7 @@ REVOKE ALL ON DATABASE "%[1]s" FROM PUBLIC;
 GRANT ALL ON DATABASE "%[1]s" TO "%[1]s";
 `, ident, pw)
 			if _, err := output(ctx, dir, nil, []byte(sql), "docker", "exec", "-i", cfg.PostgresCtr, "psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-q"); err != nil {
-				return nil, fmt.Errorf("Postgres 开户失败: %v", err)
+				return nil, fmt.Errorf("共享 Postgres 开户失败: %v", err)
 			}
 			result["DATABASE_URL"] = fmt.Sprintf("postgres://%s:%s@postgres:5432/%s?sslmode=disable", ident, pw, ident)
 			result["PGHOST"] = "postgres"
@@ -884,7 +884,7 @@ GRANT ALL ON DATABASE "%[1]s" TO "%[1]s";
 			pw := st["REDIS_PASSWORD"]
 			cmds := fmt.Sprintf("ACL SETUSER %s reset on >%s ~* &* +@all -@admin -@dangerous +info +select\nACL SAVE\n", ident, pw)
 			if b, err := output(ctx, dir, nil, []byte(cmds), "docker", "exec", "-i", cfg.ValkeyCtr, "sh", "-c", `valkey-cli --no-auth-warning -a "$VALKEY_PASSWORD"`); err != nil || strings.Contains(string(b), "ERR") {
-				return nil, fmt.Errorf("Valkey 开户失败: %v %s", err, strings.TrimSpace(string(b)))
+				return nil, fmt.Errorf("共享 Valkey 开户失败: %v %s", err, strings.TrimSpace(string(b)))
 			}
 			result["REDIS_URL"] = fmt.Sprintf("redis://%s:%s@valkey:6379/%s", ident, pw, st["REDIS_DB"])
 		default:
@@ -917,7 +917,7 @@ func freeRedisDB(self string) (int, error) {
 			return i, nil
 		}
 	}
-	return 0, errors.New("Valkey 的 63 个数据库编号已用完")
+	return 0, errors.New("共享 Valkey 的 63 个数据库编号已用完")
 }
 
 // ---------------------------------------------------------------- Caddy
@@ -980,10 +980,10 @@ func routeApp(ctx context.Context, out *streamWriter, name, domain, upstream str
 		} else {
 			os.Remove(path)
 		}
-		return fmt.Errorf("Caddy 配置校验失败（已撤销路由改动）: %v", err)
+		return fmt.Errorf("入口配置（Caddy）校验失败（已撤销路由改动）: %v", err)
 	}
 	if err := caddyReload(ctx); err != nil {
-		return fmt.Errorf("Caddy 重载失败: %v", err)
+		return fmt.Errorf("入口配置（Caddy）重载失败: %v", err)
 	}
 	return nil
 }
@@ -996,7 +996,7 @@ func unrouteApp(ctx context.Context, out *streamWriter, name string) error {
 	out.logf("▶ 项目不再声明 upstream，移除公网入口")
 	os.Remove(path)
 	if err := caddyValidate(ctx); err != nil {
-		return fmt.Errorf("Caddy 配置校验失败: %v", err)
+		return fmt.Errorf("入口配置（Caddy）校验失败: %v", err)
 	}
 	return caddyReload(ctx)
 }

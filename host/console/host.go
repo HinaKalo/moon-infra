@@ -413,12 +413,12 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	_, rebootErr := os.Stat("/var/run/reboot-required")
 
 	writeJSON(w, map[string]any{
-		"host":   map[string]any{"name": host, "kernel": strings.TrimSpace(string(kernel)), "uptime_s": int64(upSec), "load": strings.Fields(string(load))[:3], "cpus": runtime.NumCPU(), "cpu_pct": cpu},
-		"memory": map[string]any{"total": mi["MemTotal"], "available": mi["MemAvailable"], "swap_total": mi["SwapTotal"], "swap_free": mi["SwapFree"]},
-		"disk":   map[string]any{"total": diskTotal, "used": diskUsed, "avail": diskAvail},
-		"slices": slices,
-		"counts": map[string]int{"containers": len(cs), "running": running, "unhealthy": unhealthy, "services": len(svcs), "services_active": active, "services_failed": failed},
-		"security": map[string]any{"firewall": strings.TrimSpace(string(fwOut)), "reboot_required": rebootErr == nil},
+		"host":       map[string]any{"name": host, "kernel": strings.TrimSpace(string(kernel)), "uptime_s": int64(upSec), "load": strings.Fields(string(load))[:3], "cpus": runtime.NumCPU(), "cpu_pct": cpu},
+		"memory":     map[string]any{"total": mi["MemTotal"], "available": mi["MemAvailable"], "swap_total": mi["SwapTotal"], "swap_free": mi["SwapFree"]},
+		"disk":       map[string]any{"total": diskTotal, "used": diskUsed, "avail": diskAvail},
+		"slices":     slices,
+		"counts":     map[string]int{"containers": len(cs), "running": running, "unhealthy": unhealthy, "services": len(svcs), "services_active": active, "services_failed": failed},
+		"security":   map[string]any{"firewall": strings.TrimSpace(string(fwOut)), "reboot_required": rebootErr == nil},
 		"alerts":     alerts,
 		"sampled_at": at,
 	})
