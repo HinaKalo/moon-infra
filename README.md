@@ -39,14 +39,14 @@ jobs:
 
 ```yaml
 x-moon:
-  upstream: 127.0.0.1:18100      # 公网入口，自动获得 https://<仓库名>.moonl.cloud
+  upstream: 127.0.0.1:${APP_PORT} # 公网入口，自动获得 https://<仓库名>.moonl.cloud
   # domain: other.moonl.cloud   # 可选：自定义子域名
   needs: [postgres, redis]       # 可选：共享平台，自动注入 DATABASE_URL / REDIS_URL
 
 services:
   app:
     image: ${IMAGE}              # CI 构建的镜像，部署时自动填入
-    ports: ["127.0.0.1:18100:8080"]
+    ports: ["127.0.0.1:${APP_PORT}:8080"]   # APP_PORT 由 moon 自动分配并固定
     mem_limit: 256m
     healthcheck:
       test: ["CMD", "/app", "-healthcheck"]
@@ -62,7 +62,7 @@ services:
 | 内存上限 | 未声明 `mem_limit` 的服务默认 512M；所有项目合计不超过 2900M，超出拒绝部署 |
 | 硬上限 | 所有 Docker 容器位于 `moonapps.slice`：总内存 4G、不使用 swap |
 | 数据库 | 禁止自带 postgres/mysql/redis/mongo 镜像，使用 `needs` 共享平台（每项目独立库与账号） |
-| 端口 | 只能绑定 `127.0.0.1`，公网流量统一经 Caddy HTTPS |
+| 端口 | 只能绑定 `127.0.0.1`，公网流量统一经 Caddy HTTPS；`${APP_PORT}` 由 moon 为每个项目自动分配（18100–18999）并固定 |
 | 挂载 | 只能挂载命名卷或项目目录内路径 |
 | 失败回滚 | 健康检查不通过自动回滚到上一个版本，GitHub 显示失败 |
 
