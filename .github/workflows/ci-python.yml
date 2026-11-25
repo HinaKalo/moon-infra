@@ -42,4 +42,8 @@ jobs:
 
       - name: pytest
         run: |
-          if ls tests/ test/ 2>/dev/null | grep -q . || compgen -G "**/test_*.py" >/dev/null; then pytest -q; else echo "没有测试，跳过"; fi
+          if [ -d tests ] || [ -d test ] || compgen -G "test_*.py" >/dev/null || compgen -G "*/test_*.py" >/dev/null; then
+            pytest -q
+          else
+            echo "没有测试，跳过"
+          fi

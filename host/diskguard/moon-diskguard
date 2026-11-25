@@ -69,7 +69,7 @@ clean_tmpdir() { # clean_tmpdir <dir> <days>
 }
 
 clean_releases() {
-	local rel cur keep d n
+	local rel cur d n
 	for rel in /opt/*/releases /opt/*/*/releases; do
 		[ -d "$rel" ] || continue
 		cur=$(readlink -f "$(dirname "$rel")/current" 2>/dev/null || true)

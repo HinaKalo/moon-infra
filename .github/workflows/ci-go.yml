@@ -8,6 +8,10 @@ on:
         description: Go 模块所在目录
         type: string
         default: "."
+      go-version:
+        description: Go 版本（默认 stable：始终用最新补丁版，标准库漏洞修复即时生效）
+        type: string
+        default: stable
       race:
         description: 是否开启 -race
         type: boolean
@@ -29,15 +33,18 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: ${{ inputs.working-directory }}/go.mod
+          go-version: ${{ inputs.go-version }}
+          check-latest: true
           cache-dependency-path: ${{ inputs.working-directory }}/go.sum
 
       - name: gofmt
         run: |
           # 在子目录中 git ls-files 返回的就是相对当前目录的路径
-          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/') 2>/dev/null || true)
+          unformatted=$(git ls-files -z '*.go' | grep -zv '^vendor/' | xargs -0 -r gofmt -l)
           if [ -n "$unformatted" ]; then
-            echo "::error::以下文件需要 gofmt："; echo "$unformatted"; exit 1
+            echo "::error::以下文件需要 gofmt："
+            echo "$unformatted"
+            exit 1
           fi
 
       - name: go vet
@@ -48,9 +55,9 @@ jobs:
 
       - name: test
         run: |
-          flags="-count=1 -coverprofile=coverage.out"
-          if [ "${{ inputs.race }}" = "true" ]; then flags="$flags -race"; fi
-          go test $flags ./...
+          args=(-count=1 -coverprofile=coverage.out)
+          if [ "${{ inputs.race }}" = "true" ]; then args+=(-race); fi
+          go test "${args[@]}" ./...
           go tool cover -func=coverage.out | tail -1 >> "$GITHUB_STEP_SUMMARY"
 
       - name: govulncheck

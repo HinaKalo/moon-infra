@@ -35,6 +35,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
 
@@ -50,7 +51,8 @@ jobs:
           exit-code: ${{ inputs.fail-on-vulnerability && '1' || '0' }}
 
       - name: 上传到代码扫描
-        if: always() && hashFiles('trivy.sarif') != ''
+        # 代码扫描只对公开仓库免费开放；私有仓库只在日志里看结果
+        if: always() && hashFiles('trivy.sarif') != '' && !github.event.repository.private
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy.sarif
