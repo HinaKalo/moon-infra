@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# moon-diskguard：全机磁盘与内存守护
+#   moon-diskguard check     每 30 分钟：采集状态、阈值告警；磁盘 ≥85% 时执行紧急清理
+#   moon-diskguard clean     每日：按保留策略清理临时文件、旧发布、无用镜像
+#   moon-diskguard clean -n  演练：只列出将清理的内容，不删除
+# 安全规则：任何正在被进程使用（打开的文件、工作目录、可执行文件、内存映射）的路径一律不删；
+#           releases 永远保留 current 指向的版本与最新 3 个版本。
+set -uo pipefail
+
+MODE=${1:-check}
+DRY=0
+[ "${2:-}" = "-n" ] && DRY=1
+STATE=/var/lib/moon-diskguard
+RUN=/run/moon-diskguard
+mkdir -p "$STATE" "$RUN"
+chmod 755 "$STATE"
+LOG_TAG=moon-diskguard
+FREED=0
+ACTIONS=()
+
+log() { logger -t "$LOG_TAG" "$*"; [ -t 1 ] && echo "$*"; }
+
+# ---------------------------------------------------------------- 正在使用的路径
+INUSE=$RUN/inuse.txt
+collect_inuse() {
+	{
+		for p in /proc/[0-9]*; do
+			readlink "$p/cwd" 2>/dev/null
+			readlink "$p/exe" 2>/dev/null
+			for fd in "$p"/fd/*; do readlink "$fd" 2>/dev/null; done
+			awk '$6 ~ /^\// {print $6}' "$p/maps" 2>/dev/null
+		done
+	} | sed 's/ (deleted)$//' | grep '^/' | sort -u > "$INUSE"
+}
+in_use() { # 路径本身或其下任何文件被使用（前缀精确匹配，不经过正则）
+	local p
+	p=$(readlink -f "$1" 2>/dev/null || echo "${1%/}")
+	awk -v p="$p" '$0 == p || index($0, p "/") == 1 { found = 1; exit } END { exit !found }' "$INUSE"
+}
+
+size_of() { du -sxb "$1" 2>/dev/null | cut -f1; }
+
+remove() { # remove <path> <reason>
+	local p=$1 why=$2 sz
+	sz=$(size_of "$p"); sz=${sz:-0}
+	if [ $DRY -eq 1 ]; then
+		printf '[dry-run] %8s  %s  (%s)\n' "$(numfmt --to=iec "$sz")" "$p" "$why"
+	else
+		rm -rf --one-file-system -- "$p" && log "removed $p ($(numfmt --to=iec "$sz"), $why)"
+	fi
+	FREED=$((FREED + sz))
+	ACTIONS+=("$(numfmt --to=iec "$sz") $p ($why)")
+}
+
+# ---------------------------------------------------------------- 清理策略
+clean_tmpdir() { # clean_tmpdir <dir> <days>
+	local dir=$1 days=$2 e name
+	for e in "$dir"/* "$dir"/.[!.]*; do
+		[ -e "$e" ] || continue
+		name=$(basename "$e")
+		case "$name" in
+			.X11-unix|.ICE-unix|.XIM-unix|.font-unix|.Test-unix|systemd-private-*|snap-private-tmp|tmux-*|claude-*|ssh-*|cloud-init|moon-bgm-native) continue ;;
+		esac
+		# 目录内任何文件近期被修改过则保留
+		if [ -n "$(find "$e" -xdev -newermt "-${days} days" -print -quit 2>/dev/null)" ]; then continue; fi
+		in_use "$e" && continue
+		remove "$e" "${dir} 中超过 ${days} 天未修改"
+	done
+}
+
+clean_releases() {
+	local rel cur keep d n
+	for rel in /opt/*/releases /opt/*/*/releases; do
+		[ -d "$rel" ] || continue
+		cur=$(readlink -f "$(dirname "$rel")/current" 2>/dev/null || true)
+		n=0
+		while IFS= read -r d; do
+			n=$((n + 1))
+			[ $n -le 3 ] && continue
+			[ "$(readlink -f "$d")" = "$cur" ] && continue
+			grep -rqsF "$d" /etc/systemd/system/*.service /etc/caddy 2>/dev/null && continue
+			in_use "$d" && continue
+			remove "$d" "旧发布版本（保留当前与最新 3 个）"
+		done < <(find "$rel" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+	done
+}
+
+clean_root_staging() { # /root 下的发布暂存目录：每个前缀保留最新 2 个
+	local prefix d n
+	for prefix in moonpassword-release- gamehub-chess-stage- gamehub-weiqi-stage-; do
+		n=0
+		while IFS= read -r d; do
+			n=$((n + 1))
+			[ $n -le 2 ] && continue
+			in_use "$d" && continue
+			remove "$d" "发布暂存目录（每类保留最新 2 个）"
+		done < <(find /root -mindepth 1 -maxdepth 1 -type d -name "${prefix}*" -printf '%T@ %p\n' | sort -rn | cut -d' ' -f2-)
+	done
+}
+
+clean_packages() {
+	local apt
+	apt=$(size_of /var/cache/apt/archives); apt=${apt:-0}
+	if [ "$apt" -gt $((300 * 1024 * 1024)) ]; then
+		if [ $DRY -eq 1 ]; then echo "[dry-run] apt-get clean ($(numfmt --to=iec "$apt"))"; else apt-get clean -qq && log "apt-get clean ($(numfmt --to=iec "$apt"))"; fi
+		FREED=$((FREED + apt)); ACTIONS+=("$(numfmt --to=iec "$apt") apt 缓存")
+	fi
+	if [ $DRY -eq 0 ]; then
+		podman container prune -f --filter until=24h >/dev/null 2>&1
+		podman image prune -f >/dev/null 2>&1
+		docker builder prune -af --filter until=72h >/dev/null 2>&1
+	fi
+}
+
+emergency() { # 磁盘 ≥85%：额外清理可再生内容
+	[ $DRY -eq 1 ] && { echo "[dry-run] emergency: docker image prune -a, journal vacuum 300M, /tmp 1 天"; return; }
+	docker image prune -af >/dev/null 2>&1
+	docker builder prune -af >/dev/null 2>&1
+	journalctl --vacuum-size=300M >/dev/null 2>&1
+	clean_tmpdir /tmp 1
+	log "emergency cleanup executed"
+}
+
+# ---------------------------------------------------------------- 告警
+notify() { # notify <key> <priority> <title> <message>
+	local key=$1 prio=$2 title=$3 msg=$4 last now
+	now=$(date +%s)
+	last=$(cat "$STATE/alert.$key" 2>/dev/null || echo 0)
+	[ $((now - last)) -lt 21600 ] && return 0 # 同类告警 6 小时内只发一次
+	echo "$now" > "$STATE/alert.$key"
+	log "ALERT [$key] $title: $msg"
+	[ -f /etc/moon-ops/ntfy.env ] || return 0
+	# shellcheck disable=SC1091
+	. /etc/moon-ops/ntfy.env
+	curl -fsS -m 10 -u "$NTFY_USER:$NTFY_PASS" -H "Title: $title" -H "Priority: $prio" -H "Tags: moon" \
+		-d "$msg" "http://127.0.0.1:2586/$NTFY_TOPIC" >/dev/null 2>&1 || log "ntfy push failed"
+}
+
+# ---------------------------------------------------------------- 状态
+disk_pct() { df --output=pcent / | tail -1 | tr -dc 0-9; }
+
+write_status() {
+	local pct total used avail mem_total mem_avail swap_total swap_used ooms
+	read -r total used avail <<<"$(df -B1 --output=size,used,avail / | tail -1)"
+	pct=$(disk_pct)
+	mem_total=$(awk '/^MemTotal/{print $2*1024}' /proc/meminfo)
+	mem_avail=$(awk '/^MemAvailable/{print $2*1024}' /proc/meminfo)
+	swap_total=$(awk '/^SwapTotal/{print $2*1024}' /proc/meminfo)
+	swap_used=$(( swap_total - $(awk '/^SwapFree/{print $2*1024}' /proc/meminfo) ))
+	ooms=$(journalctl -k --since "-30min" --no-pager -q 2>/dev/null | grep -c "Out of memory" || true)
+	local cats="" d
+	if [ "$MODE" = clean ] || [ ! -s "$STATE/categories.json" ]; then
+		for d in /opt /var/lib/docker /var/lib/containers /var/lib/mysql /var/log /tmp /var/tmp /home /srv /root /var/cache; do
+			cats+=$(printf '{"path":"%s","bytes":%s},' "$d" "$(size_of "$d" || echo 0)")
+		done
+		echo "[${cats%,}]" > "$STATE/categories.json"
+	fi
+	cat > "$STATE/status.json.tmp" <<J
+{
+  "updated_at": "$(date -u +%FT%TZ)",
+  "disk": {"total": $total, "used": $used, "avail": $avail, "percent": $pct},
+  "memory": {"total": $mem_total, "available": $mem_avail, "swap_total": $swap_total, "swap_used": $swap_used, "oom_kills_30m": $ooms},
+  "categories": $(cat "$STATE/categories.json"),
+  "last_clean": $(cat "$STATE/last_clean.json" 2>/dev/null || echo null)
+}
+J
+	mv "$STATE/status.json.tmp" "$STATE/status.json"
+	chmod 644 "$STATE/status.json"
+
+	# 阈值告警
+	if [ "$pct" -ge 90 ]; then notify disk-crit urgent "moon 磁盘 ${pct}%" "根分区已用 ${pct}%，剩余 $(numfmt --to=iec "$avail")。已执行紧急清理，请检查: sudo ncdu -x /"
+	elif [ "$pct" -ge 80 ]; then notify disk-warn high "moon 磁盘 ${pct}%" "根分区已用 ${pct}%，剩余 $(numfmt --to=iec "$avail")"
+	fi
+	if [ $((mem_avail * 100 / mem_total)) -lt 8 ]; then notify mem-low high "moon 内存紧张" "可用内存仅 $(numfmt --to=iec "$mem_avail")（$((mem_avail * 100 / mem_total))%）"; fi
+	if [ "$swap_total" -gt 0 ] && [ $((swap_used * 100 / swap_total)) -ge 50 ]; then notify swap-high default "moon zram 使用 $((swap_used * 100 / swap_total))%" "压缩交换区已用 $(numfmt --to=iec "$swap_used")，存在内存压力"; fi
+	if [ "$ooms" -gt 0 ]; then notify oom high "moon 发生 OOM" "最近 30 分钟内核终止了 $ooms 个进程，详见 journalctl -k | grep -i 'out of memory'"; fi
+}
+
+# ---------------------------------------------------------------- main
+case "$MODE" in
+	check)
+		if [ "$(disk_pct)" -ge 85 ]; then collect_inuse; emergency; fi
+		write_status
+		;;
+	clean)
+		collect_inuse
+		clean_tmpdir /tmp 3
+		clean_tmpdir /var/tmp 14
+		clean_releases
+		clean_root_staging
+		clean_packages
+		[ "$(disk_pct)" -ge 85 ] && emergency
+		if [ $DRY -eq 0 ]; then
+			printf '{"at":"%s","freed_bytes":%s,"items":%s}\n' "$(date -u +%FT%TZ)" "$FREED" "${#ACTIONS[@]}" > "$STATE/last_clean.json"
+			log "clean finished: freed $(numfmt --to=iec $FREED) in ${#ACTIONS[@]} items"
+		else
+			echo "dry-run total: $(numfmt --to=iec $FREED) in ${#ACTIONS[@]} items"
+		fi
+		write_status
+		;;
+	*) echo "usage: moon-diskguard check | clean [-n]"; exit 2 ;;
+esac
+exit 0

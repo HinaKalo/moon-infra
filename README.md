@@ -74,3 +74,16 @@ services:
 - `/srv/platform`：共享 Postgres 17（`moon-postgres`）与 Valkey 8（`moon-valkey`）
 - `/srv/apps/<名称>`：各项目部署目录；`platform.env` 为自动生成的数据库凭据
 - 定时任务：`moon-pg-backup.timer`（每日 03:30，保留 14 天）、`moon-docker-gc.timer`（每日清理 3 天前未用镜像）
+
+## 宿主组件（`host/`）
+
+moon 上以原生 systemd 服务运行的运维组件，源码即配置（IaC）。安装/升级：`sudo bash host/install.sh $(pwd)/host`。
+
+| 组件 | 说明 |
+|---|---|
+| `deployd/` | moon-deployd：GitHub OIDC 认证的部署代理（`https://deploy.moonl.cloud`），记录部署历史 `history.jsonl` |
+| `console/` | moon-console：运维面板 `https://console.moonl.cloud`，moon-sso 登录（仅 orangepro11），管理 Docker/podman 容器、systemd 服务、项目、数据库、磁盘 |
+| `diskguard/` | moon-diskguard：每 30 分钟巡检磁盘/内存并通过 ntfy 告警；每日按保留策略清理（安装到 `/usr/local/sbin`） |
+| `firewall/rules.nft` | 主机防火墙（moon-firewall.service，独立表 `inet moon_filter`，默认拒绝入站）。新增公网端口改这里再 `systemctl reload moon-firewall` |
+
+面板以宿主原生服务运行而非容器：Docker 故障时依然可以用它排障。

@@ -1,0 +1,53 @@
+#!/usr/sbin/nft -f
+# moon 主机防火墙：默认拒绝入站，只放行明确对外提供的服务。
+# 独立的 inet moon_filter 表，不影响 Docker/podman 自己的规则；重复加载是幂等的。
+table inet moon_filter
+delete table inet moon_filter
+
+table inet moon_filter {
+	set tcp_public {
+		type inet_service; flags interval
+		elements = {
+			22,            # SSH
+			53,            # moon-geodns 权威 DNS
+			80, 443,       # Caddy
+			3478,          # STUN/TURN
+			5349, 15349,   # TURN over TLS（moonchat-turn）
+			7881,          # LiveKit RTC/TCP（moonchat）
+			11010,         # EasyTier
+			19781,         # LiveKit RTC/TCP（语音 QA 环境）
+			21000-21999,   # moon-remote EasyTier 网络
+		}
+	}
+	set udp_public {
+		type inet_service; flags interval
+		elements = {
+			53,            # moon-geodns
+			443,           # HTTP/3（Caddy）
+			3478,          # STUN/TURN
+			7882,          # LiveKit RTC/UDP（moonchat）
+			11010,         # EasyTier
+			19782,         # LiveKit RTC/UDP（语音 QA 环境）
+			21000-21999,   # moon-remote EasyTier 网络
+			49380-49479,   # TURN 中继端口段
+		}
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+		ct state established,related accept
+		ct state invalid drop
+		iif "lo" accept
+		# 内部网络：EasyTier 组网、Docker、podman 容器访问宿主
+		iifname "tun0" accept
+		iifname "docker0" accept
+		iifname "br-*" accept
+		iifname "podman*" accept
+		iifname "veth*" accept
+		ip protocol icmp icmp type { echo-request, destination-unreachable, time-exceeded, parameter-problem } limit rate 20/second accept
+		meta l4proto ipv6-icmp accept
+		tcp dport @tcp_public accept
+		udp dport @udp_public accept
+		limit rate 6/minute burst 10 packets log prefix "moon-fw drop: " level info
+	}
+}
